@@ -44,13 +44,29 @@ class _NotesPageState extends State<NotesPage> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['md', 'markdown'],
+      withData: true,
     );
     final file = result?.files.single;
     if (file == null) return;
-    final note = await _store.importFrom(file.path!, file.name);
-    if (note == null) return;
-    await _reload();
-    if (mounted) _open(note);
+    try {
+      final note = await _store.importFrom(file.name, bytes: file.bytes);
+      if (note == null) {
+        _showError('导入失败：无法读取所选文件');
+        return;
+      }
+      await _reload();
+      if (mounted) _open(note);
+    } catch (e) {
+      debugPrint('NotesPage|import|Error|$e');
+      _showError('导入失败：$e');
+    }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _open(Note note) async {

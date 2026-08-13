@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -59,23 +61,45 @@ class NoteStore {
     if (file.existsSync()) await file.delete();
   }
 
-  Future<Note?> importFrom(String sourcePath, String sourceName) async {
-    final source = File(sourcePath);
-    if (!source.existsSync()) return null;
+  Future<Note?> importFrom(
+    String sourceName, {
+    Uint8List? bytes,
+    String? sourcePath,
+  }) async {
     final dir = await _notesDir();
     final base = sourceName.replaceAll(RegExp(r'\.md$'), '');
     final fileName = _uniqueFileName(dir, base.isEmpty ? 'imported' : base);
     final dest = File('${dir.path}/$fileName');
-    await source.copy(dest.path);
+    if (bytes != null) {
+      // 优先写入字节：不依赖文件选择器返回的临时路径，天然规避
+      // Android 缓存路径/权限导致的源文件不可读问题。
+      await dest.writeAsBytes(bytes);
+    } else if (sourcePath != null && sourcePath.isNotEmpty) {
+      final source = File(sourcePath);
+      if (!source.existsSync()) return null;
+      await source.copy(dest.path);
+    } else {
+      return null;
+    }
     return _fileToNote(dest);
   }
 
   Note _fileToNote(File file) {
     return Note(
       fileName: file.uri.pathSegments.last,
-      content: file.readAsStringSync(),
+      content: _decode(file.readAsBytesSync()),
       updatedAt: file.lastModifiedSync(),
     );
+  }
+
+  /// 兼容非 UTF-8 编码（如 GBK）的 Markdown 文件：
+  /// 严格 UTF-8 解码失败时回退 Latin-1（永不抛错），保证导入/列表不崩溃。
+  String _decode(List<int> bytes) {
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return latin1.decode(bytes);
+    }
   }
 
   String _uniqueFileName(Directory dir, String title) {

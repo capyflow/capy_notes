@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/theme.dart';
 import '../../data/models/note.dart';
 import '../../data/note_store.dart';
+import 'task_list_scanner.dart';
 
 class EditorPage extends StatefulWidget {
   const EditorPage({super.key, required this.note});
@@ -45,7 +46,7 @@ class _EditorPageState extends State<EditorPage> {
     _dirty = true;
   }
 
-  Future<void> _save() async {
+  Future<void> _save({bool notify = true}) async {
     final store = NoteStore.instance;
     final newTitle = _titleController.text.trim();
     if (newTitle.isNotEmpty && newTitle != _note.title) {
@@ -58,11 +59,26 @@ class _EditorPageState extends State<EditorPage> {
       _bodyController.text,
     );
     _dirty = false;
-    if (mounted) {
+    if (mounted && notify) {
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
         ..showSnackBar(const SnackBar(content: Text('已保存')));
     }
+  }
+
+  /// 预览中点击任务复选框：翻转对应源码行的 `[ ]` ↔ `[x]` 并落盘。
+  void _toggleTaskLine(int index) {
+    final tasks = TaskLineScanner.scan(_bodyController.text);
+    if (index >= tasks.length) return;
+    final task = tasks[index];
+    _bodyController.text = _bodyController.text.replaceRange(
+      task.checkboxStart,
+      task.checkboxEnd,
+      task.checked ? '[ ]' : '[x]',
+    );
+    _markDirty();
+    setState(() {});
+    _save(notify: false);
   }
 
   Future<void> _export() async {
@@ -188,6 +204,8 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   Widget _buildPreview() {
+    final tasks = TaskLineScanner.scan(_bodyController.text);
+    var checkboxIndex = 0;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: MarkdownBody(
@@ -195,6 +213,16 @@ class _EditorPageState extends State<EditorPage> {
         selectable: true,
         styleSheet: _capyMarkdownStyle(),
         extensionSet: md.ExtensionSet.gitHubFlavored,
+        checkboxBuilder: (checked) {
+          final index = checkboxIndex++;
+          final task = index < tasks.length ? tasks[index] : null;
+          final enabled = task != null && task.checked == checked;
+          return _PreviewCheckbox(
+            checked: checked,
+            enabled: enabled,
+            onTap: enabled ? () => _toggleTaskLine(index) : null,
+          );
+        },
       ),
     );
   }
@@ -227,6 +255,42 @@ class _EditorPageState extends State<EditorPage> {
       listBullet: const TextStyle(fontSize: 16),
       tableBorder: TableBorder.all(color: CapyColors.divider),
       tableHead: const TextStyle(fontWeight: FontWeight.w600),
+    );
+  }
+}
+
+/// 预览中的任务复选框：点击可翻转 `[ ]` ↔ `[x]` 并写回源码。
+class _PreviewCheckbox extends StatelessWidget {
+  const _PreviewCheckbox({
+    required this.checked,
+    required this.enabled,
+    this.onTap,
+  });
+
+  final bool checked;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(
+      checked ? Icons.check_box : Icons.check_box_outline_blank,
+      size: 18,
+      color: enabled && !checked ? CapyColors.accent : CapyColors.textSecondary,
+    );
+    if (!enabled || onTap == null) {
+      return Padding(padding: const EdgeInsets.only(right: 4), child: icon);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Tooltip(
+        message: checked ? '标记为未完成' : '标记为已完成',
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: icon,
+        ),
+      ),
     );
   }
 }
